@@ -15,89 +15,106 @@
 #include <unistd.h>
 #include <vector>
 
+using namespace std;
+
 #define BUFFER_SIZE 1024
 
+string get_host_ip() {
+    int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd == -1) {
+        cerr << "Error creating socket" << endl;
+        return "127.0.0.1";
+    }
+    struct sockaddr_in servaddr;
+    servaddr.sin_addr.s_addr = inet_addr("10.254.254.254");
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_port = htons(1);
+    if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) == -1) {
+        close(sockfd);
+        return "127.0.0.1";
+    }
+    struct sockaddr_storage clientaddr;
+    socklen_t clientaddrlen = sizeof(clientaddr);
+    char clientip[INET_ADDRSTRLEN];
+    if (getsockname(sockfd, (struct sockaddr *)&clientaddr, &clientaddrlen) == -1) {
+        close(sockfd);
+        return "127.0.0.1";
+    }
+    inet_ntop(AF_INET, &((struct sockaddr_in *)&clientaddr)->sin_addr, clientip, INET_ADDRSTRLEN);
+    close(sockfd);
+    return string(clientip);
+}
+
 struct Neighbour {
-    std::string ip;
+    string ip;
     int port;
-    std::vector<int> keys;
+    vector<int> keys;
+};
+
+class Store {
+    map<int, string> store;
+    mutex storemutex;
+
+public:
+    int put(int key, string value) {
+        lock_guard<mutex> lock(storemutex);
+        if (store.find(key) == store.end()) {
+            store[key] = value;
+            return 0;
+        } else {
+            store[key] = value;
+            return 1;
+        }
+    }
+
+    string get(int key) {
+        lock_guard<mutex> lock(storemutex);
+        if (store.find(key) == store.end()) {
+            return "";
+        }
+        return store[key];
+    }
+
+    int del(int key) {
+        lock_guard<mutex> lock(storemutex);
+        if (store.find(key) == store.end()) {
+            return 0;
+        }
+        store.erase(key);
+        return 1;
+    }
+
+    int size() {
+        lock_guard<mutex> lock(storemutex);
+        return store.size();
+    }
+
+    void show() {
+        lock_guard<mutex> lock(storemutex);
+        for (pair<int, string> k : store) {
+            cout << k.first << " " << k.second << endl;
+        }
+    }
 };
 
 class Node {
-    std::map<int, std::string> localstore;
-    std::vector<Neighbour> neighbours;
+    Store localstore;
+    vector<Neighbour> neighbours;
+    mutex neighbourmutex;
     int port;
-    std::string ip;
-    std::string commMethod;
-    std::mutex localmutex;
-    std::mutex neighbourmutex;
-    std::vector<std::thread> serviceWorkerQueue;
-    std::condition_variable initiateShutdown;
+    string ip;
+    string commMethod;
+    vector<thread> serviceWorkerQueue;
+    condition_variable initiateShutdown;
     bool shutdownQueued;
-    std::mutex cvMutex;
+    mutex cvMutex;
 
-    std::string get_host_ip() {
-        int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-        if (sockfd == -1) {
-            std::cerr << "Error creating socket" << std::endl;
-            return "127.0.0.1";
-        }
-        struct sockaddr_in servaddr;
-        servaddr.sin_addr.s_addr = inet_addr("10.254.254.254");
-        servaddr.sin_family = AF_INET;
-        servaddr.sin_port = htons(1);
-        if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) == -1) {
-            close(sockfd);
-            return "127.0.0.1";
-        }
-        struct sockaddr_storage clientaddr;
-        socklen_t clientaddrlen = sizeof(clientaddr);
-        char clientip[INET_ADDRSTRLEN];
-        if (getsockname(sockfd, (struct sockaddr *)&clientaddr, &clientaddrlen) == -1) {
-            close(sockfd);
-            return "127.0.0.1";
-        }
-        inet_ntop(AF_INET, &((struct sockaddr_in *)&clientaddr)->sin_addr, clientip, INET_ADDRSTRLEN);
-        close(sockfd);
-        return std::string(clientip);
-    }
-
-    void storeModify(int key, std::string value) {
-        std::lock_guard<std::mutex> lock(localmutex);
-        localstore[key] = value;
-    }
-    void storeDelete(int key) {
-        std::lock_guard<std::mutex> lock(localmutex);
-        localstore.erase(key);
-    }
-    int storeCheck(int key) {
-        std::lock_guard<std::mutex> lock(localmutex);
-        if (localstore.find(key) == localstore.end()) {
-            return 0;
-        }
-        return 1;
-    }
-    int storeSize() {
-        std::lock_guard<std::mutex> lock(localmutex);
-        return localstore.size();
-    }
-    void storeShow() {
-        std::lock_guard<std::mutex> lock(localmutex);
-        for (std::pair<int, std::string> k : localstore) {
-            std::cout << k.first << " " << k.second << std::endl;
-        }
-    }
-    std::string storeGet(int key) {
-        std::lock_guard<std::mutex> lock(localmutex);
-        return localstore[key];
-    }
-    int sendMessage(std::string payload, bool receive, std::string &response, std::string ip,
-                    int port, int sockfd = -1) {
+    int sendMessage(string payload, bool receive, string &response, string ip, int port, int sockfd = -1) {
         if (commMethod == "tcp") {
             if (sockfd == -1) {
                 sockfd = socket(AF_INET, SOCK_STREAM, 0);
                 if (sockfd == -1) {
-                    std::cerr << "Error creating socket" << std::endl;
+                    cerr << "Error creating socket" << endl;
                     return -1;
                 }
             }
@@ -107,22 +124,22 @@ class Node {
             servaddr.sin_addr.s_addr = inet_addr(ip.c_str());
             if (connect(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) == -1) {
                 close(sockfd);
-                std::cerr << "Error connecting to " << ip << ":" << port << std::endl;
+                cerr << "Error connecting to " << ip << ":" << port << endl;
                 return -1;
             }
             if (send(sockfd, payload.c_str(), payload.size(), 0) == -1) {
                 close(sockfd);
-                std::cerr << "Error sending payload" << std::endl;
+                cerr << "Error sending payload" << endl;
                 return -1;
             }
             if (receive) {
-                std::vector<char> buf(BUFFER_SIZE);
+                vector<char> buf(BUFFER_SIZE);
                 int recvsize = 0;
                 do {
                     recvsize = recv(sockfd, &buf[0], buf.size(), 0);
                     if (recvsize == -1) {
                         close(sockfd);
-                        std::cerr << "Error receiving response" << std::endl;
+                        cerr << "Error receiving response" << endl;
                         return -1;
                     }
                     response.append(buf.cbegin(), buf.cend());
@@ -134,7 +151,7 @@ class Node {
             if (sockfd == -1) {
                 sockfd = socket(AF_INET, SOCK_STREAM, 0);
                 if (sockfd == -1) {
-                    std::cerr << "Error creating socket" << std::endl;
+                    cerr << "Error creating socket" << endl;
                     return -1;
                 }
             }
@@ -142,20 +159,19 @@ class Node {
             servaddr.sin_family = AF_INET;
             servaddr.sin_port = htons(port);
             servaddr.sin_addr.s_addr = inet_addr(ip.c_str());
-            if (sendto(sockfd, payload.c_str(), payload.size(), 0, (struct sockaddr *)&servaddr, sizeof(servaddr)) ==
-                -1) {
+            if (sendto(sockfd, payload.c_str(), payload.size(), 0, (struct sockaddr *)&servaddr, sizeof(servaddr)) == -1) {
                 close(sockfd);
-                std::cerr << "Error sending payload" << std::endl;
+                cerr << "Error sending payload" << endl;
                 return -1;
             }
             if (receive) {
-                std::vector<char> buf(BUFFER_SIZE);
+                vector<char> buf(BUFFER_SIZE);
                 int recvsize = 0;
                 do {
                     recvsize = recvfrom(sockfd, &buf[0], buf.size(), 0, NULL, 0);
                     if (recvsize == -1) {
                         close(sockfd);
-                        std::cerr << "Error receiving response" << std::endl;
+                        cerr << "Error receiving response" << endl;
                         return -1;
                     }
                     response.append(buf.cbegin(), buf.cend());
@@ -164,96 +180,104 @@ class Node {
             close(sockfd);
             return 0;
         } else {
-            std::cerr << "RPC not implemented" << std::endl;
+            cerr << "RPC not implemented" << endl;
             return -1;
         }
     }
-    void sendToAllNeighbours(std::string method, std::string payload, bool receive, std::vector<std::string> &replies) {
+    void sendToAllNeighbours(string method, string payload, bool receive,
+                             vector<string> &replies) { // should this wait for all threads?
         // create a thread for each neighbour and gather the reply into a vector
-        std::vector<std::thread> threads;
-        std::mutex replymutex;
+        vector<thread> threads;
+        mutex replymutex;
 
         for (Neighbour n : neighbours) {
             threads.emplace_back([&replies, n, method, payload, receive, &replymutex, this]() {
-                std::string response;
+                string response;
                 sendMessage(payload, receive, response, n.ip, n.port);
                 if (receive) {
-                    std::lock_guard<std::mutex> lock(replymutex);
+                    lock_guard<mutex> lock(replymutex);
                     replies.push_back(response);
                 }
             });
         }
 
-        for (std::thread &t : threads) {
+        for (thread &t : threads) {
             t.join();
         }
     }
     int neighbourKeyCheck(int key) {
-        std::lock_guard<std::mutex> lock(neighbourmutex);
+        lock_guard<mutex> lock(neighbourmutex);
         for (int i = 0; i < neighbours.size(); i++) {
-            if (neighbours[i].keys.end() != std::find(neighbours[i].keys.begin(), neighbours[i].keys.end(), key)) {
+            if (neighbours[i].keys.end() != find(neighbours[i].keys.begin(), neighbours[i].keys.end(), key)) {
                 return i;
             }
         }
         return -1; // Return -1 if the key is not found
     }
-    void neighbourGetKey(std::string method, int neighbourIndex, int key, std::string &response) {
-        std::lock_guard<std::mutex> lock(neighbourmutex);
-        sendMessage("get " + std::to_string(key), true, response, neighbours[neighbourIndex].ip,
-                    neighbours[neighbourIndex].port);
+    void neighbourGetKey(string method, int neighbourIndex, int key, string &response) {
+        lock_guard<mutex> lock(neighbourmutex);
+        sendMessage("get " + to_string(key), true, response, neighbours[neighbourIndex].ip, neighbours[neighbourIndex].port);
     }
 
     int neighbourGetSize() {
-        std::lock_guard<std::mutex> lock(neighbourmutex);
+        lock_guard<mutex> lock(neighbourmutex);
         return neighbours.size();
     }
 
-    void clientHandler(int clientfd, struct sockaddr* clientaddr, socklen_t clientaddrlen) {
-        std::string request;
-        std::vector<char> buf(BUFFER_SIZE);
+    void clientHandler(int clientfd, struct sockaddr *clientaddr, socklen_t clientaddrlen) {
+        string request;
+        vector<char> buf(BUFFER_SIZE);
         int recvsize = 0;
         do {
             recvsize = recv(clientfd, &buf[0], buf.size(), 0);
             if (recvsize == -1) {
                 close(clientfd);
-                std::cerr << "Error receiving request" << std::endl;
+                cerr << "Error receiving request" << endl;
                 return;
             }
             request.append(buf.cbegin(), buf.cend());
         } while (recvsize == BUFFER_SIZE);
-        std::string value;
+        string value;
         int key;
         parseInput(request, key, value);
-        std::transform(value.begin(), value.end(), value.begin(), ::toupper);
+        transform(value.begin(), value.end(), value.begin(), ::toupper);
         if (request == "GET") {
-            if (storeCheck(key)) {// possible data race here
-                value = storeGet(key);
-                struct sockaddr_in* clin = (struct sockaddr_in *)clientaddr;
+            string value = localstore.get(key);
+            if (!value.empty()) { // maybe use sendMessage with custom sockfd
+                struct sockaddr_in *clin = (struct sockaddr_in *)clientaddr;
                 char cip[INET_ADDRSTRLEN];
                 int port = htons(clin->sin_port);
                 inet_ntop(AF_INET, &(clin->sin_addr), cip, INET_ADDRSTRLEN);
-                std::string ip = std::string(cip);
-                std::string _empty;
-                sendMessage(value, false, _empty, ip, port);
+                string ip = string(cip);
+                string _empty;
+                sendMessage(value, false, _empty, ip, port, clientfd);
             } else {
-                std::cerr << "";
+                cerr << ""; //?
             }
         } else if (request == "PUT") {
 
         } else if (request == "DEL") {
 
         } else if (request == "INIT") {
-
+            // implement conflict resolution later
+            // reply y
+            struct sockaddr_in *clin = (struct sockaddr_in *)clientaddr;
+            char cip[INET_ADDRSTRLEN];
+            int port = htons(clin->sin_port);
+            inet_ntop(AF_INET, &(clin->sin_addr), cip, INET_ADDRSTRLEN);
+            string ip = string(cip);
+            string _empty;
+            sendMessage("y", false, _empty, ip, port, clientfd);
         }
         close(clientfd);
     }
 
     void startServer() {
         if (commMethod == "tcp") {
-            std::thread t = std::thread([&]() {
+            thread t = thread([&]() {
                 int sockfd = socket(AF_INET, SOCK_STREAM, 0);
                 if (sockfd == -1) {
-                    std::cerr << "Error creating socket" << std::endl;
+                    cerr << "Error creating socket" << endl;
                     return;
                 }
                 struct sockaddr_in servaddr;
@@ -262,12 +286,12 @@ class Node {
                 servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
                 if (bind(sockfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) == -1) {
                     close(sockfd);
-                    std::cerr << "Error binding socket" << std::endl;
+                    cerr << "Error binding socket" << endl;
                     return;
                 }
                 if (listen(sockfd, neighbourGetSize()) == -1) {
                     close(sockfd);
-                    std::cerr << "Error listening" << std::endl;
+                    cerr << "Error listening" << endl;
                     return;
                 }
                 while (true) {
@@ -277,49 +301,50 @@ class Node {
 
                     if (clientfd == -1) {
                         close(sockfd);
-                        std::cerr << "Error accepting connection" << std::endl;
+                        cerr << "Error accepting connection" << endl;
                         return;
                     }
-                    std::string request;
-                    std::vector<char> buf(BUFFER_SIZE);
-                    int recvsize = 0;
-                    do {
-                        recvsize = recv(clientfd, &buf[0], buf.size(), 0);
-                        if (recvsize == -1) {
-                            close(sockfd);
-                            std::cerr << "Error receiving request" << std::endl;
-                            return;
-                        }
-                        request.append(buf.cbegin(), buf.cend());
-                    } while (recvsize == BUFFER_SIZE);
-                    std::string value;
-                    int key;
-                    parseInput(request, key, value);
-                    std::transform(value.begin(), value.end(), value.begin(), ::toupper);
-                    if (request == "GET") {
-                        if (storeCheck(key)) {
-                            value = storeGet(key);
-                        }
-                        // send value to sender
+                    // PASS TO CLIENTHANDLER
+                    // string request;
+                    // vector<char> buf(BUFFER_SIZE);
+                    // int recvsize = 0;
+                    // do {
+                    //     recvsize = recv(clientfd, &buf[0], buf.size(), 0);
+                    //     if (recvsize == -1) {
+                    //         close(sockfd);
+                    //         cerr << "Error receiving request" << endl;
+                    //         return;
+                    //     }
+                    //     request.append(buf.cbegin(), buf.cend());
+                    // } while (recvsize == BUFFER_SIZE);
+                    // string value;
+                    // int key;
+                    // parseInput(request, key, value);
+                    // transform(value.begin(), value.end(), value.begin(), ::toupper);
+                    // if (request == "GET") {
+                    //     value = localstore.get(key);
+                    //     if (storeCheck(key)) {
+                    //         value = storeGet(key);
+                    //     }
+                    //     // send value to sender
 
-                    } else if (request == "PUT") {
+                    // } else if (request == "PUT") {
 
-                    } else if (request == "DEL") {
+                    // } else if (request == "DEL") {
 
-                    } else if (request == "INIT") {
-                    }
-                    std::string command = request.substr(0, request.find(" "));
-                    request = request.substr(request.find(" ") + 1);
+                    // } else if (request == "INIT") {
+                    // }
+                    // string command = request.substr(0, request.find(" "));
+                    // request = request.substr(request.find(" ") + 1);
 
-                    std::string response;
-                    sendMessage(request, true, response, inet_ntoa(clientaddr.sin_addr),
-                                ntohs(clientaddr.sin_port));
-                    if (send(clientfd, response.c_str(), response.size(), 0) == -1) {
-                        close(sockfd);
-                        std::cerr << "Error sending response" << std::endl;
-                        return;
-                    }
-                    close(clientfd);
+                    // string response;
+                    // sendMessage(request, true, response, inet_ntoa(clientaddr.sin_addr), ntohs(clientaddr.sin_port));
+                    // if (send(clientfd, response.c_str(), response.size(), 0) == -1) {
+                    //     close(sockfd);
+                    //     cerr << "Error sending response" << endl;
+                    //     return;
+                    // }
+                    // close(clientfd);
                 }
             });
         } else if (commMethod == "udp") {
@@ -330,124 +355,124 @@ class Node {
     }
 
 public:
-    Node(int port, std::string commMethod) {
+    Node(int port, string commMethod) {
         this->shutdownQueued = false;
         this->port = port;
         this->commMethod = commMethod;
         this->ip = get_host_ip();
         // open file addr.txt and read
-        std::ifstream infile("../addr.txt"); // workaround for build dir
+        ifstream infile("../addr.txt"); // workaround for build dir
         if (!infile) {
-            std::cerr << "Error opening file" << std::endl;
+            cerr << "Error opening file" << endl;
         }
-        std::string line;
-        while (std::getline(infile, line)) {
-            std::string ip = line.substr(0, line.find(":"));
+        string line;
+        while (getline(infile, line)) {
+            string ip = line.substr(0, line.find(":"));
             if (ip == this->ip) {
                 continue;
             }
-            int port = std::stoi(line.substr(line.find(":") + 1));
+            int port = stoi(line.substr(line.find(":") + 1));
             neighbours.push_back({ip, port, {}});
         }
     }
     Node(int port) : Node(port, "tcp") {}
-    Node(std::string commMethod) : Node(0, commMethod) {}
+    Node(string commMethod) : Node(0, commMethod) {}
     Node() : Node(0, "tcp") {}
     void get(int key) {
-        if (storeCheck(key)) {
-            std::cout << storeGet(key) << std::endl;
+        string value = localstore.get(key);
+        if (!value.empty()) {
+            cout << value << endl;
             return;
         }
         int neighbourWithKey = neighbourKeyCheck(key);
         if (neighbourWithKey == -1) {
-            std::cout << "Key " << key << " not found" << std::endl;
+            cout << "Key " << key << " not found" << endl;
             return;
         } else {
-            std::string response;
+            string response;
             neighbourGetKey(commMethod, neighbourWithKey, key, response);
-            std::cout << key << ": " << response << std::endl;
+            cout << key << ": " << response << endl;
             return;
         }
     }
-    void put(int key, std::string value) {
-        if (storeCheck(key)) {
-            storeModify(key, value);
-            std::cout << "Key " << key << " updated" << std::endl;
+    void put(int key, string value) {
+        string oldValue = localstore.get(key);
+        if (!oldValue.empty() && localstore.put(key, value) == 1) {
+            cout << "Key " << key << " updated" << endl;
         } else {
-            std::vector<std::string> replies;
-            sendToAllNeighbours(commMethod, "init " + std::to_string(key), true, replies);
+            localstore.del(key);
+            vector<string> replies;
+            sendToAllNeighbours(commMethod, "init " + to_string(key), true, replies);
             int ycount = 0;
-            for (std::string reply : replies) {
+            for (string reply : replies) {
                 if (reply == "y") {
                     ycount++;
                 }
             }
-            if ((float)ycount > (float)neighbourGetSize() * 0.5) {
-                storeModify(key, value);
-                std::cout << "Key " << key << " created" << std::endl;
-                std::vector<std::string> _empty = {};
-                sendToAllNeighbours(commMethod, "put " + std::to_string(key), false, _empty);
+            if ((float)ycount > (float)neighbourGetSize() * 0.5 && localstore.put(key, value) == 0) {
+                cout << "Key " << key << " created" << endl;
+                vector<string> _empty = {};
+                sendToAllNeighbours(commMethod, "put " + to_string(key), false, _empty);
             } else {
-                std::cout << "Cannot update key: Conflict. Try again" << std::endl;
+                cout << "Cannot update key: Conflict. Try again" << endl;
             }
         }
     };
     void del(int key) {
-        if (storeCheck(key)) {
-            storeDelete(key);
-            std::cout << "Key " << key << " deleted" << std::endl;
+
+        if (localstore.del(key) == 1) {
+            cout << "Key " << key << " deleted" << endl;
             // broadcast to all neighbours that value has been deleted
-            std::vector<std::string> _empty = {};
-            sendToAllNeighbours(commMethod, "del " + std::to_string(key), false, _empty);
+            vector<string> _empty = {};
+            sendToAllNeighbours(commMethod, "del " + to_string(key), false, _empty);
         } else {
             // maybe give address of potential storer
-            std::cout << "Key " << key << " does not exist in local store" << std::endl;
+            cout << "Key " << key << " does not exist in local store" << endl;
         }
     }
     void store() {
-        if (storeSize() == 0) {
-            std::cout << "Local store is empty" << std::endl;
+        if (localstore.size() == 0) {
+            cout << "Local store is empty" << endl;
             return;
         }
-        std::cout << "Local store:" << std::endl;
-        storeShow();
+        cout << "Local store:" << endl;
+        localstore.show();
     }
-    void exit() {
-        std::unique_lock<std::mutex> lock(cvMutex);
+    void exit() { // in progress
+        unique_lock<mutex> lock(cvMutex);
         shutdownQueued = true;
         initiateShutdown.notify_all();
         lock.unlock();
-        for (std::thread &t : serviceWorkerQueue) {
+        for (thread &t : serviceWorkerQueue) {
             t.join();
         }
     }; // cleanup
 
-    void parseInput(std::string &action, int &key, std::string &value) {
-        std::string skey;
+    void parseInput(string &action, int &key, string &value) {
+        string skey;
         action.erase(0, action.find_first_not_of(" "));
-        action.erase(std::find_if(action.rbegin(), action.rend(), [](int ch) { return !std::isspace(ch); }).base(),
-                     action.end());
+        action.erase(find_if(action.rbegin(), action.rend(), [](int ch) { return !isspace(ch); }).base(), action.end());
         // split if there is a space for action and key
-        if (action.find(" ") != std::string::npos) {
+        if (action.find(" ") != string::npos) {
             skey = action.substr(action.find(" ") + 1);
             action = action.substr(0, action.find(" "));
             // split again if there is another space for key and value
-            if (skey.find(" ") != std::string::npos) {
+            if (skey.find(" ") != string::npos) {
                 value = skey.substr(skey.find(" ") + 1);
                 skey = skey.substr(0, skey.find(" "));
             }
-            key = std::stoi(skey);
+            key = stoi(skey);
         }
     }
 
     void start() {
         startServer();
-        std::string action, value;
+        string action, value;
         int key;
         while (true) {
-            std::getline(std::cin, action);
+            getline(cin, action);
             parseInput(action, key, value);
-            std::transform(action.begin(), action.end(), action.begin(), ::toupper);
+            transform(action.begin(), action.end(), action.begin(), ::toupper);
             if (action == "GET") {
                 get(key);
             } else if (action == "PUT") {
@@ -460,7 +485,7 @@ public:
                 exit();
                 break;
             } else {
-                std::cout << "Invalid action" << std::endl;
+                cout << "Invalid action" << endl;
             }
         }
     }

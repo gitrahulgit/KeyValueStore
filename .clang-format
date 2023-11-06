@@ -2,5 +2,5 @@ BasedOnStyle: LLVM
 IndentWidth: 4
 BreakBeforeBraces: Attach
 UseTab: Never
-ColumnLimit: 120
+ColumnLimit: 130
 AccessModifierOffset: -4
