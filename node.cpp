@@ -357,7 +357,7 @@ class Node {
 public:
     Node(int port, string commMethod) {
         this->shutdownQueued = false;
-        this->port = port;
+        this->port = port; // dont need port anymore
         this->commMethod = commMethod;
         this->ip = get_host_ip();
         // open file addr.txt and read
@@ -369,6 +369,7 @@ public:
         while (getline(infile, line)) {
             string ip = line.substr(0, line.find(":"));
             if (ip == this->ip) {
+                this->port = stoi(line.substr(line.find(":") + 1));
                 continue;
             }
             int port = stoi(line.substr(line.find(":") + 1));
