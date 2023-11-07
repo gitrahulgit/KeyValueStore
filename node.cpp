@@ -379,6 +379,7 @@ public:
     Node(int port) : Node(port, "tcp") {}
     Node(string commMethod) : Node(0, commMethod) {}
     Node() : Node(0, "tcp") {}
+    
     void get(int key) {
         string value = localstore.get(key);
         if (!value.empty()) {
@@ -494,7 +495,19 @@ public:
 };
 
 int main(int argc, char *argv[]) {
-    Node node(25621);
-    node.start();
+
+string input = argv[1];
+
+    if (input == "tcp" ||input == "udp" || input == "rpc") {
+        Node node(1234, input);
+        node.start();
+    }
+    
+    else {
+        cout << "Invalid communication method. Please enter 'tcp', 'udp', or 'rpc'." << endl;
+        return 0;
+    }
+
+
     return 0;
 }
